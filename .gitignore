@@ -1,0 +1,117 @@
+# Flutter-specific
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+*.packages
+pubspec.lock
+coverage/
+
+# Android
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/local.properties
+android/.gradle/
+android/gradle/wrapper/gradle-wrapper.jar
+
+# iOS
+ios/Flutter/Flutter.podspec
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.xcframework
+ios/Flutter/generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/Podfile.lock
+
+# Web
+web/flutter_service_worker.js
+
+# macOS
+macos/Flutter/GeneratedPluginRegistrant.swift
+macos/Flutter/Flutter.framework
+macos/Pods/
+macos/Podfile.lock
+
+# Windows
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugin_registrant.h
+windows/flutter/generated_plugins.cmake
+
+# Linux
+linux/flutter/generated_plugin_registrant.cc
+linux/flutter/generated_plugin_registrant.h
+linux/flutter/generated_plugins.cmake
+
+# Python Backend-specific
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment variables (SENSITIVE - never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# IDE-specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Uploads and temporary files
+uploads/
+*.tmp
+*.log
+
+# OS-specific
+.DS_Store
+.AppleDouble
+.LSOverride
+.windows
+.androidStudio*
+
+# Scripts and build files (optional - include if you want to track them)
+# build-and-run.ps1
+# rebuild-app.ps1
+# run_flutter.bat
+
+# Generated files
+.dart_tool/
+.rspec_status
+.gradle/
