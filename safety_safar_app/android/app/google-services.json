@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "56348181593",
+    "project_id": "safetysafar-b341d",
+    "storage_bucket": "safetysafar-b341d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:56348181593:android:70e1f9ba1e7ef2e084dd48",
+        "android_client_info": {
+          "package_name": "com.example.safety_safar_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC0ePQcFe52z_4sOqz-6qhBLJBeCsivJsk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
