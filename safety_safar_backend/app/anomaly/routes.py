@@ -3,7 +3,7 @@ Geofencing & Anomaly Detection Routes
 - Track location every 10 seconds
 - Detect danger zone entry
 - Detect abnormal speed
-- Detect geofence exit
+- Dgit pull origin main --allow-unrelated-historiesetect geofence exit
 - Store AnomalyAlerts in DB
 """
 
