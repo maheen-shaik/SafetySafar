@@ -1,7 +1,7 @@
 class ApiConfig {
   // ════════════════════════════════════════════════════════════════
   // ✏️  CHANGE ONLY THIS LINE when you switch networks / locations
-  static const String serverIp = '192.168.0.7';
+  static const String serverIp = '192.168.0.2';
   // ════════════════════════════════════════════════════════════════
   //
   // HOW TO FIND YOUR IP:
@@ -46,6 +46,14 @@ class ApiConfig {
 
   // Live tourist locations for authority map
   static String get touristLocations => '$baseUrl/anomaly/tourist-locations';
+
+  // ── eFIR ─────────────────────────────────────────────────────
+  static String get fileFir        => '$baseUrl/fir/file';
+  static String get myFirs         => '$baseUrl/fir/my';
+  static String get allFirs        => '$baseUrl/fir/all';
+  static String firDetail(String id)  => '$baseUrl/fir/$id';
+  static String resolveFir(String id) => '$baseUrl/fir/$id/resolve';
+  static String firImage(String firId, String filename) => '$baseUrl/fir/$firId/image/$filename';
 
   // Danger zones & AI assessment
   static String get dangerZones => '$baseUrl/anomaly/danger-zones';

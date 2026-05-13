@@ -11,6 +11,8 @@ from app.auth.dependencies import get_current_user, get_db,require_authority
 from app.dashboard.routes import router as dashboard_router
 from app.alerts.routes import router as alerts_router
 from app.anomaly.routes import router as anomaly_router
+from app.fir.routes import router as fir_router
+from app.models.fir import FIR
 from fastapi import HTTPException
 from datetime import datetime
 import qrcode
@@ -34,6 +36,7 @@ app.include_router(kyc_router)
 app.include_router(dashboard_router)
 app.include_router(alerts_router)
 app.include_router(anomaly_router)
+app.include_router(fir_router)
 
 @app.get("/")
 def home():

@@ -6,6 +6,7 @@ import 'kyc_pending_list_screen.dart';
 import 'live_alerts_map_screen.dart';
 import 'sos_alerts_screen.dart';
 import 'authority_settings_screen.dart';
+import 'efir_management_screen.dart';
 import '../login_screen.dart';
 import '../utils/api_config.dart';
 
@@ -40,6 +41,7 @@ class _AuthorityDashboardState extends State<AuthorityDashboard>
     _NavItem(Icons.people_alt_rounded, 'Tourists'),
     _NavItem(Icons.verified_user_rounded, 'KYC'),
     _NavItem(Icons.emergency_rounded, 'SOS'),
+    _NavItem(Icons.article_rounded, 'eFIR'),
     _NavItem(Icons.map_rounded, 'Tracking'),
     _NavItem(Icons.settings_rounded, 'Settings'),
   ];
@@ -260,9 +262,11 @@ class _AuthorityDashboardState extends State<AuthorityDashboard>
       case 3:
         return SOSAlertsScreen(authToken: widget.authToken);
       case 4:
+        return EFirManagementScreen(authToken: widget.authToken);
+      case 5:
         return LiveAlertsMapScreen(
             authToken: widget.authToken, alerts: alertsList);
-      case 5:
+      case 6:
         return AuthoritySettingsScreen(
           authToken: widget.authToken,
           userId: widget.userId,
