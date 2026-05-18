@@ -57,6 +57,25 @@ class NotificationService {
     );
   }
 
+  static Future<void> showRawAlert({required String title, required String body}) async {
+    await _plugin.show(
+      title.hashCode.abs(),
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'zone_alerts',
+          'Danger Zone Alerts',
+          channelDescription: 'Alerts when you enter a danger zone',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+        ),
+      ),
+    );
+  }
+
   static Future<void> showZoneExitAlert({required String zoneName}) async {
     await _plugin.show(
       ('exit_$zoneName').hashCode.abs(),

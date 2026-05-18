@@ -28,6 +28,39 @@ class AnomalyEvent {
   }
 }
 
+class SafetyUpdate {
+  final int score;
+  final String status;      // SAFE / CAUTION / RISK / DANGER
+  final String zoneDanger;  // safe / low / medium / high / critical
+  final Map<String, dynamic> breakdown;
+
+  SafetyUpdate({
+    required this.score,
+    required this.status,
+    required this.zoneDanger,
+    required this.breakdown,
+  });
+
+  Color get statusColor {
+    switch (status) {
+      case 'DANGER': return const Color(0xFFB71C1C);
+      case 'RISK':   return const Color(0xFFE65100);
+      case 'CAUTION': return const Color(0xFFF57F17);
+      default:        return const Color(0xFF1B5E20);
+    }
+  }
+
+  Color get zoneColor {
+    switch (zoneDanger) {
+      case 'critical': return const Color(0xFFB71C1C);
+      case 'high':     return const Color(0xFFE65100);
+      case 'medium':   return const Color(0xFFF57F17);
+      case 'low':      return const Color(0xFF1565C0);
+      default:         return const Color(0xFF1B5E20);
+    }
+  }
+}
+
 class LocationTrackingService {
   final String _authToken;
   Timer? _periodicTimer;
@@ -42,7 +75,9 @@ class LocationTrackingService {
 
   LocationTrackingService(this._authToken);
 
-  Future<void> startTracking(Function(String) onStatus, Function(String) onError, {Function(AnomalyEvent)? onAnomalyDetected}) async {
+  Future<void> startTracking(Function(String) onStatus, Function(String) onError,
+      {Function(AnomalyEvent)? onAnomalyDetected,
+       Function(SafetyUpdate)? onSafetyUpdate}) async {
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10),
     ).listen((pos) {
@@ -52,7 +87,7 @@ class LocationTrackingService {
 
     _periodicTimer = Timer.periodic(
       const Duration(seconds: 15),
-      (_) => _sendLocation(onAnomalyDetected: onAnomalyDetected),
+      (_) => _sendLocation(onAnomalyDetected: onAnomalyDetected, onSafetyUpdate: onSafetyUpdate),
     );
   }
 
@@ -79,7 +114,10 @@ class LocationTrackingService {
     }
   }
 
-  Future<void> _sendLocation({Function(AnomalyEvent)? onAnomalyDetected}) async {
+  Future<void> _sendLocation({
+    Function(AnomalyEvent)? onAnomalyDetected,
+    Function(SafetyUpdate)? onSafetyUpdate,
+  }) async {
     try {
       final pos = await Geolocator.getCurrentPosition();
       final res = await http.post(
@@ -95,41 +133,69 @@ class LocationTrackingService {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
+
+        // ── AI Safety Score update ───────────────────────────────
+        final safetyScore  = (data['safety_score']  as num?)?.toInt() ?? 100;
+        final safetyStatus = data['safety_status']  as String? ?? 'SAFE';
+        final breakdown    = (data['risk_breakdown'] as Map<String, dynamic>?) ?? {};
+
+        // Derive zone danger from zone_risk_pct in breakdown
+        final zoneRiskPct = (breakdown['zone_risk_pct'] as num?)?.toInt() ?? 0;
+        String zoneDanger = 'safe';
+        if (zoneRiskPct >= 80) {
+          zoneDanger = 'critical';
+        } else if (zoneRiskPct >= 50) {
+          zoneDanger = 'high';
+        } else if (zoneRiskPct >= 20) {
+          zoneDanger = 'medium';
+        } else if (zoneRiskPct > 0) {
+          zoneDanger = 'low';
+        }
+
+        // Check anomalies for active zone entry to get real zone danger level
         final anomalies = (data['anomalies'] as List?) ?? [];
         for (final anomaly in anomalies) {
-          final type = anomaly['type'] as String? ?? '';
-          final zoneName = anomaly['zone_name'] as String? ?? 'Unknown Zone';
-          final level = anomaly['danger_level'] as String? ?? 'medium';
-          final zoneType = anomaly['zone_type'] as String? ?? 'unsafe';
+          if (anomaly['type'] == 'danger_zone_entry') {
+            final lvl = anomaly['danger_level'] as String? ?? '';
+            if (['critical','high','medium','low'].contains(lvl)) zoneDanger = lvl;
+            break;
+          }
+        }
+
+        onSafetyUpdate?.call(SafetyUpdate(
+          score: safetyScore,
+          status: safetyStatus,
+          zoneDanger: zoneDanger,
+          breakdown: breakdown,
+        ));
+
+        // ── Anomaly events (banners / notifications) ─────────────
+        for (final anomaly in anomalies) {
+          final type     = anomaly['type']         as String? ?? '';
+          final zoneName = anomaly['zone_name']    as String? ?? 'Unknown Zone';
+          final level    = anomaly['danger_level'] as String? ?? 'medium';
+          final zoneType = anomaly['zone_type']    as String? ?? 'unsafe';
 
           if (type == 'danger_zone_entry') {
-            // Push notification (works when app is backgrounded / screen off)
             await NotificationService.showZoneEntryAlert(
-              zoneName: zoneName,
-              dangerLevel: level,
-              zoneType: zoneType,
-            );
-            // In-app callback for foreground popup
+              zoneName: zoneName, dangerLevel: level, zoneType: zoneType);
             onAnomalyDetected?.call(AnomalyEvent(
               type: type,
               severity: level == 'critical' || level == 'high' ? 'critical' : 'warning',
               message: 'You entered "$zoneName"',
-              data: {
-                'zone_name': zoneName,
-                'danger_level': level,
-                'zone_type': zoneType,
-                'threat_label': zoneType.replaceAll('_', ' ').toUpperCase(),
-              },
+              data: {'zone_name': zoneName, 'danger_level': level,
+                     'zone_type': zoneType, 'threat_label': zoneType.replaceAll('_', ' ').toUpperCase()},
             ));
           } else if (type == 'danger_zone_exit') {
             await NotificationService.showZoneExitAlert(zoneName: zoneName);
           } else if (type == 'prolonged_inactivity') {
             onAnomalyDetected?.call(AnomalyEvent(
-              type: type,
-              severity: 'critical',
-              message: 'Inactivity alert sent to authorities',
-              data: anomaly,
-            ));
+              type: type, severity: 'critical',
+              message: 'Inactivity alert sent to authorities', data: anomaly));
+          } else if (type == 'distress_pattern') {
+            onAnomalyDetected?.call(AnomalyEvent(
+              type: type, severity: 'critical',
+              message: 'Distress pattern detected', data: anomaly));
           }
         }
       }

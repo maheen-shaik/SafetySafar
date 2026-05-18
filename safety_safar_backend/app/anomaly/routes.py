@@ -14,12 +14,17 @@ from app.auth.dependencies import get_db, get_current_user, require_authority
 from app.models.anomaly import LocationTrack, AnomalyAlert, DangerZone, AnomalyConfig
 from app.models.users import User
 from app.core.config import settings
+from app.anomaly.ml_detector import (
+    ping_analyzer, inactivity_det, distress_det, risk_engine, tier_clf
+)
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 from typing import Optional, List
 import math
 import json
+import numpy as np
 import requests as http_requests
+from app.fcm_helper import send_danger_zone_notification
 
 router = APIRouter(prefix="/anomaly", tags=["Anomaly & Geofencing"])
 
@@ -41,6 +46,8 @@ class LocationUpdate(BaseModel):
     longitude: float
     accuracy: Optional[float] = None
     timestamp: Optional[str] = None
+    battery: Optional[float] = 100.0   # battery % sent by app
+    panic: Optional[bool] = False      # panic button flag
 
 
 class DangerZoneCreate(BaseModel):
@@ -127,8 +134,6 @@ def track_location(
     current_user: User = Depends(get_current_user),
 ):
     now = datetime.now(timezone.utc)
-
-    # Parse provided timestamp or use now
     if data.timestamp:
         try:
             now = datetime.fromisoformat(data.timestamp.replace("Z", "+00:00"))
@@ -136,234 +141,254 @@ def track_location(
             pass
 
     anomalies_detected = []
+    battery = data.battery if data.battery is not None else 100.0
 
-    # ── 1. Fetch last known location ──────────────────────────────
-    prev_track = (
+    # ── Fetch recent history (last 25 pings) ─────────────────────
+    recent_tracks = (
         db.query(LocationTrack)
         .filter(LocationTrack.user_id == current_user.id)
         .order_by(desc(LocationTrack.timestamp))
-        .first()
-    )
-
-    # ── 2. Speed anomaly detection ────────────────────────────────
-    speed_kmh = 0.0
-    if prev_track:
-        speed_kmh = compute_speed_kmh(
-            prev_track, data.latitude, data.longitude, now
-        )
-        if speed_kmh > DEFAULT_SPEED_THRESHOLD_KMH:
-            create_anomaly(
-                db,
-                current_user.id,
-                anomaly_type="overspeeding",
-                severity="warning",
-                description=(
-                    f"Abnormal speed detected: {speed_kmh:.1f} km/h "
-                    f"(threshold: {DEFAULT_SPEED_THRESHOLD_KMH} km/h)"
-                ),
-                lat=data.latitude,
-                lon=data.longitude,
-                extra_data={"speed_kmh": round(speed_kmh, 2)},
-            )
-            anomalies_detected.append(
-                {"type": "overspeeding", "speed_kmh": round(speed_kmh, 2)}
-            )
-
-    # ── 3. Geofence exit detection ────────────────────────────────
-    dist_from_center_km = haversine_km(
-        GEOFENCE_CENTER_LAT, GEOFENCE_CENTER_LNG,
-        data.latitude, data.longitude,
-    )
-    if dist_from_center_km > DEFAULT_GEOFENCE_RADIUS_KM:
-        create_anomaly(
-            db,
-            current_user.id,
-            anomaly_type="geofence_exit",
-            severity="critical",
-            description=(
-                f"Tourist exited the designated travel zone. "
-                f"Distance from center: {dist_from_center_km:.1f} km"
-            ),
-            lat=data.latitude,
-            lon=data.longitude,
-            extra_data={
-                "distance_km": round(dist_from_center_km, 2),
-                "geofence_radius_km": DEFAULT_GEOFENCE_RADIUS_KM,
-            },
-        )
-        anomalies_detected.append(
-            {
-                "type": "geofence_exit",
-                "distance_km": round(dist_from_center_km, 2),
-            }
-        )
-
-    # ── 4. Signal drop / inactivity detection ────────────────────
-    INACTIVITY_MINUTES = 45
-    SIGNAL_DROP_MINUTES = 10
-    if prev_track:
-        prev_time = prev_track.timestamp
-        if prev_time.tzinfo is None:
-            prev_time = prev_time.replace(tzinfo=timezone.utc)
-        gap_minutes = (now - prev_time).total_seconds() / 60.0
-
-        if gap_minutes >= SIGNAL_DROP_MINUTES:
-            # Check no recent signal-drop alert in last 30 min to avoid spam
-            recent_cutoff = now - timedelta(minutes=30)
-            recent_drop = (
-                db.query(AnomalyAlert)
-                .filter(
-                    AnomalyAlert.user_id == current_user.id,
-                    AnomalyAlert.anomaly_type == "signal_drop",
-                    AnomalyAlert.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if not recent_drop:
-                create_anomaly(
-                    db,
-                    current_user.id,
-                    anomaly_type="signal_drop",
-                    severity="warning",
-                    description=f"Location signal was lost for {gap_minutes:.0f} minutes.",
-                    lat=data.latitude,
-                    lon=data.longitude,
-                    extra_data={"gap_minutes": round(gap_minutes, 1)},
-                )
-                anomalies_detected.append({"type": "signal_drop", "gap_minutes": round(gap_minutes, 1)})
-
-        if gap_minutes >= INACTIVITY_MINUTES:
-            recent_cutoff = now - timedelta(minutes=60)
-            recent_inactivity = (
-                db.query(AnomalyAlert)
-                .filter(
-                    AnomalyAlert.user_id == current_user.id,
-                    AnomalyAlert.anomaly_type == "prolonged_inactivity",
-                    AnomalyAlert.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if not recent_inactivity:
-                create_anomaly(
-                    db,
-                    current_user.id,
-                    anomaly_type="prolonged_inactivity",
-                    severity="critical",
-                    description=f"Tourist has been inactive for {gap_minutes:.0f} minutes. Possible distress.",
-                    lat=data.latitude,
-                    lon=data.longitude,
-                    extra_data={"inactive_minutes": round(gap_minutes, 1)},
-                )
-                anomalies_detected.append({"type": "prolonged_inactivity", "inactive_minutes": round(gap_minutes, 1)})
-
-    # ── 5. Danger zone entry & exit detection ────────────────────
-    active_zones = (
-        db.query(DangerZone)
-        .filter(DangerZone.is_active == True)
+        .limit(25)
         .all()
     )
+    recent_tracks = list(reversed(recent_tracks))   # oldest first
+    prev_track    = recent_tracks[-1] if recent_tracks else None
+
+    # ── Build feature sequences for ML layers ────────────────────
+    gaps_sec, speeds, headings, trace = [], [], [], []
+    for i, t in enumerate(recent_tracks):
+        if i > 0:
+            prev = recent_tracks[i - 1]
+            pt   = prev.timestamp.replace(tzinfo=timezone.utc) if prev.timestamp.tzinfo is None else prev.timestamp
+            ct   = t.timestamp.replace(tzinfo=timezone.utc) if t.timestamp.tzinfo is None else t.timestamp
+            gaps_sec.append((ct - pt).total_seconds())
+        if t.speed is not None:
+            speeds.append(t.speed)
+        if t.heading is not None:
+            headings.append(t.heading)
+        trace.append((t.latitude, t.longitude))
+
+    # Current gap from last ping to now
+    current_gap_sec = 0.0
+    if prev_track:
+        pt = prev_track.timestamp.replace(tzinfo=timezone.utc) if prev_track.timestamp.tzinfo is None else prev_track.timestamp
+        current_gap_sec = (now - pt).total_seconds()
+
+    # ── Compute current speed ─────────────────────────────────────
+    speed_kmh = 0.0
+    if prev_track:
+        speed_kmh = compute_speed_kmh(prev_track, data.latitude, data.longitude, now)
+
+    # ─────────────────────────────────────────────────────────────
+    #  LAYER 1 — Ping Pattern Analyzer (LSTM-style)
+    # ─────────────────────────────────────────────────────────────
+    ping_result = ping_analyzer.analyze(gaps_sec, current_gap_sec)
+    if ping_result["is_anomaly"]:
+        gap_min = current_gap_sec / 60.0
+        recent_cutoff = now - timedelta(minutes=30)
+        if not db.query(AnomalyAlert).filter(
+            AnomalyAlert.user_id == current_user.id,
+            AnomalyAlert.anomaly_type == "signal_drop",
+            AnomalyAlert.created_at >= recent_cutoff,
+        ).first():
+            sev = "critical" if current_gap_sec > 1800 else "warning"
+            create_anomaly(db, current_user.id,
+                anomaly_type="signal_drop", severity=sev,
+                description=f"Abnormal ping gap: {gap_min:.1f} min (z-score: {ping_result.get('z_score', 'N/A')})",
+                lat=data.latitude, lon=data.longitude,
+                extra_data={"gap_min": round(gap_min, 2),
+                            "confidence": ping_result["confidence"],
+                            "layer": "lstm_ping_analyzer"})
+            anomalies_detected.append({"type": "signal_drop", "gap_min": round(gap_min, 2),
+                                        "confidence": ping_result["confidence"]})
+
+    # ─────────────────────────────────────────────────────────────
+    #  LAYER 2 — Isolation Forest (Inactivity)
+    # ─────────────────────────────────────────────────────────────
+    # Calculate how long tourist hasn't moved significantly (>50m)
+    stationary_min = 0.0
+    if len(recent_tracks) >= 2:
+        for t in reversed(recent_tracks):
+            d = haversine_m(t.latitude, t.longitude, data.latitude, data.longitude)
+            if d > 50:
+                break
+            pt = t.timestamp.replace(tzinfo=timezone.utc) if t.timestamp.tzinfo is None else t.timestamp
+            stationary_min = (now - pt).total_seconds() / 60.0
+
+    avg_speed    = float(np.mean(speeds)) if speeds else 0.0
+    dist_last_hr = sum(
+        haversine_m(recent_tracks[i].latitude, recent_tracks[i].longitude,
+                    recent_tracks[i+1].latitude, recent_tracks[i+1].longitude)
+        for i in range(len(recent_tracks)-1)
+    ) / 1000.0
+
+    inact_result = inactivity_det.detect(stationary_min, avg_speed,
+                                         dist_last_hr, now.hour + now.minute / 60)
+    if inact_result["is_anomaly"]:
+        recent_cutoff = now - timedelta(minutes=60)
+        if not db.query(AnomalyAlert).filter(
+            AnomalyAlert.user_id == current_user.id,
+            AnomalyAlert.anomaly_type == "prolonged_inactivity",
+            AnomalyAlert.created_at >= recent_cutoff,
+        ).first():
+            create_anomaly(db, current_user.id,
+                anomaly_type="prolonged_inactivity", severity="critical",
+                description=f"Isolation Forest: abnormal inactivity {stationary_min:.0f} min (score: {inact_result['anomaly_score']:.2f})",
+                lat=data.latitude, lon=data.longitude,
+                extra_data={"stationary_min": stationary_min,
+                            "anomaly_score": inact_result["anomaly_score"],
+                            "layer": "isolation_forest"})
+            anomalies_detected.append({"type": "prolonged_inactivity",
+                                        "stationary_min": round(stationary_min, 1),
+                                        "anomaly_score": inact_result["anomaly_score"]})
+
+    # ─────────────────────────────────────────────────────────────
+    #  LAYER 3 — Movement Distress Detector (DTW + speed/heading)
+    # ─────────────────────────────────────────────────────────────
+    speeds_with_current = speeds + [round(speed_kmh, 2)]
+    distress_result = distress_det.detect(speeds_with_current, headings, trace)
+    if distress_result["is_distress"]:
+        recent_cutoff = now - timedelta(minutes=15)
+        if not db.query(AnomalyAlert).filter(
+            AnomalyAlert.user_id == current_user.id,
+            AnomalyAlert.anomaly_type == "distress_pattern",
+            AnomalyAlert.created_at >= recent_cutoff,
+        ).first():
+            create_anomaly(db, current_user.id,
+                anomaly_type="distress_pattern", severity="critical",
+                description=f"DTW distress pattern detected (confidence: {distress_result['confidence']:.0%}). High-speed stop: {distress_result['high_speed_stop']}, Erratic heading: {distress_result['erratic_heading']}",
+                lat=data.latitude, lon=data.longitude,
+                extra_data={**distress_result, "layer": "dtw_distress"})
+            anomalies_detected.append({"type": "distress_pattern",
+                                        "confidence": distress_result["confidence"]})
+
+    # ─────────────────────────────────────────────────────────────
+    #  LAYER 4 — Danger Zone check (existing rule-based, kept intact)
+    # ─────────────────────────────────────────────────────────────
+    active_zones      = db.query(DangerZone).filter(DangerZone.is_active == True).all()
     current_inside_ids = set()
+    worst_zone_danger  = "safe"
+
     for zone in active_zones:
-        dist_m = haversine_m(
-            zone.latitude, zone.longitude,
-            data.latitude, data.longitude,
-        )
+        dist_m = haversine_m(zone.latitude, zone.longitude, data.latitude, data.longitude)
         if dist_m <= zone.radius:
             current_inside_ids.add(zone.id)
+            # Track worst zone level for risk score
+            lvl_order = ["safe","low","medium","high","critical"]
+            if lvl_order.index(zone.danger_level) > lvl_order.index(worst_zone_danger):
+                worst_zone_danger = zone.danger_level
             if zone.danger_level == "safe":
                 continue
             recent_cutoff = now - timedelta(minutes=10)
-            recent = (
-                db.query(AnomalyAlert)
-                .filter(
-                    AnomalyAlert.user_id == current_user.id,
-                    AnomalyAlert.anomaly_type == "danger_zone_entry",
-                    AnomalyAlert.alert_data["zone_id"].astext == str(zone.id),
-                    AnomalyAlert.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if not recent:
-                severity_map = {
-                    "low": "info",
-                    "medium": "warning",
-                    "high": "warning",
-                    "critical": "critical",
-                }
-                create_anomaly(
-                    db,
-                    current_user.id,
+            if not db.query(AnomalyAlert).filter(
+                AnomalyAlert.user_id == current_user.id,
+                AnomalyAlert.anomaly_type == "danger_zone_entry",
+                AnomalyAlert.alert_data["zone_id"].astext == str(zone.id),
+                AnomalyAlert.created_at >= recent_cutoff,
+            ).first():
+                sev_map = {"low":"info","medium":"warning","high":"warning","critical":"critical"}
+                create_anomaly(db, current_user.id,
                     anomaly_type="danger_zone_entry",
-                    severity=severity_map.get(zone.danger_level, "warning"),
-                    description=(
-                        f"Tourist entered danger zone: '{zone.name}'. "
-                        f"Level: {zone.danger_level.upper()}. "
-                        f"{zone.reason or ''}"
-                    ),
-                    lat=data.latitude,
-                    lon=data.longitude,
-                    extra_data={
-                        "zone_id": str(zone.id),
-                        "zone_name": zone.name,
-                        "zone_type": zone.zone_type,
-                        "danger_level": zone.danger_level,
-                        "distance_m": round(dist_m, 1),
-                    },
-                )
-                anomalies_detected.append(
-                    {
-                        "type": "danger_zone_entry",
-                        "zone_name": zone.name,
-                        "danger_level": zone.danger_level,
-                    }
-                )
+                    severity=sev_map.get(zone.danger_level, "warning"),
+                    description=f"Tourist entered danger zone: '{zone.name}' (Level: {zone.danger_level.upper()}). {zone.reason or ''}",
+                    lat=data.latitude, lon=data.longitude,
+                    extra_data={"zone_id": str(zone.id), "zone_name": zone.name,
+                                "danger_level": zone.danger_level, "distance_m": round(dist_m, 1)})
+                anomalies_detected.append({"type": "danger_zone_entry",
+                                            "zone_name": zone.name,
+                                            "danger_level": zone.danger_level,
+                                            "zone_type": zone.zone_type or "unsafe"})
+                # Send FCM push so notification arrives even when app is killed
+                if current_user.fcm_token:
+                    send_danger_zone_notification(
+                        fcm_token=current_user.fcm_token,
+                        zone_name=zone.name,
+                        danger_level=zone.danger_level,
+                        zone_type=zone.zone_type or "unsafe",
+                        reason=zone.reason or "",
+                    )
 
-    # Exit detection: was inside zone on previous ping but not now
+    # Zone exit detection
     if prev_track:
         for zone in active_zones:
             if zone.danger_level == "safe":
                 continue
-            prev_dist_m = haversine_m(
-                zone.latitude, zone.longitude,
-                prev_track.latitude, prev_track.longitude,
-            )
-            was_inside = prev_dist_m <= zone.radius
-            is_now_inside = zone.id in current_inside_ids
-            if was_inside and not is_now_inside:
+            prev_dist_m = haversine_m(zone.latitude, zone.longitude,
+                                       prev_track.latitude, prev_track.longitude)
+            if prev_dist_m <= zone.radius and zone.id not in current_inside_ids:
                 recent_cutoff = now - timedelta(minutes=10)
-                recent_exit = (
-                    db.query(AnomalyAlert)
-                    .filter(
-                        AnomalyAlert.user_id == current_user.id,
-                        AnomalyAlert.anomaly_type == "danger_zone_exit",
-                        AnomalyAlert.alert_data["zone_id"].astext == str(zone.id),
-                        AnomalyAlert.created_at >= recent_cutoff,
-                    )
-                    .first()
-                )
-                if not recent_exit:
-                    create_anomaly(
-                        db,
-                        current_user.id,
-                        anomaly_type="danger_zone_exit",
-                        severity="info",
-                        description=(
-                            f"Tourist exited danger zone: '{zone.name}' "
-                            f"({zone.danger_level.upper()})."
-                        ),
-                        lat=data.latitude,
-                        lon=data.longitude,
-                        extra_data={
-                            "zone_id": str(zone.id),
-                            "zone_name": zone.name,
-                            "danger_level": zone.danger_level,
-                        },
-                    )
-                    anomalies_detected.append(
-                        {"type": "danger_zone_exit", "zone_name": zone.name}
-                    )
+                if not db.query(AnomalyAlert).filter(
+                    AnomalyAlert.user_id == current_user.id,
+                    AnomalyAlert.anomaly_type == "danger_zone_exit",
+                    AnomalyAlert.alert_data["zone_id"].astext == str(zone.id),
+                    AnomalyAlert.created_at >= recent_cutoff,
+                ).first():
+                    create_anomaly(db, current_user.id,
+                        anomaly_type="danger_zone_exit", severity="info",
+                        description=f"Tourist exited danger zone: '{zone.name}' ({zone.danger_level.upper()}).",
+                        lat=data.latitude, lon=data.longitude,
+                        extra_data={"zone_id": str(zone.id), "zone_name": zone.name,
+                                    "danger_level": zone.danger_level})
+                    anomalies_detected.append({"type": "danger_zone_exit", "zone_name": zone.name})
 
-    # ── 6. Save location track ────────────────────────────────────
+    # Geofence exit
+    dist_from_center_km = haversine_km(GEOFENCE_CENTER_LAT, GEOFENCE_CENTER_LNG,
+                                        data.latitude, data.longitude)
+    if dist_from_center_km > DEFAULT_GEOFENCE_RADIUS_KM:
+        create_anomaly(db, current_user.id,
+            anomaly_type="geofence_exit", severity="critical",
+            description=f"Tourist exited designated travel zone. Distance: {dist_from_center_km:.1f} km",
+            lat=data.latitude, lon=data.longitude,
+            extra_data={"distance_km": round(dist_from_center_km, 2)})
+        anomalies_detected.append({"type": "geofence_exit",
+                                    "distance_km": round(dist_from_center_km, 2)})
+
+    # ─────────────────────────────────────────────────────────────
+    #  RISK SCORING ENGINE — combine all 4 layers
+    # ─────────────────────────────────────────────────────────────
+    score_result = risk_engine.compute(
+        ping_confidence    = ping_result["confidence"],
+        inactivity_score   = inact_result["anomaly_score"],
+        distress_confidence= distress_result["confidence"],
+        zone_danger        = worst_zone_danger,
+        battery_pct        = battery,
+    )
+
+    # ─────────────────────────────────────────────────────────────
+    #  ALERT TIER CLASSIFIER
+    # ─────────────────────────────────────────────────────────────
+    wellness_missed = 0   # placeholder — wellness check system can extend this
+    tier_result = tier_clf.classify(
+        safety_score        = score_result["safety_score"],
+        ping_gap_min        = current_gap_sec / 60.0,
+        ping_confidence     = ping_result["confidence"],
+        inactivity_anomaly  = inact_result["is_anomaly"],
+        inactivity_score    = inact_result["anomaly_score"],
+        distress_detected   = distress_result["is_distress"],
+        distress_confidence = distress_result["confidence"],
+        zone_danger         = worst_zone_danger,
+        wellness_missed     = wellness_missed,
+        panic_pressed       = data.panic or False,
+    )
+
+    # Save tier alert if triggered (deduplicate per 30 min)
+    if tier_result["triggered"]:
+        recent_cutoff = now - timedelta(minutes=30)
+        if not db.query(AnomalyAlert).filter(
+            AnomalyAlert.user_id == current_user.id,
+            AnomalyAlert.anomaly_type == f"tier_{tier_result['tier'].lower()}",
+            AnomalyAlert.created_at >= recent_cutoff,
+        ).first():
+            create_anomaly(db, current_user.id,
+                anomaly_type=f"tier_{tier_result['tier'].lower()}",
+                severity="critical",
+                description=tier_result["reason"],
+                lat=data.latitude, lon=data.longitude,
+                extra_data={"tier": tier_result["tier"],
+                            "safety_score": score_result["safety_score"],
+                            "auto_efir": tier_result["auto_efir"]})
+
+    # ── Save location track ───────────────────────────────────────
     track = LocationTrack(
         user_id=current_user.id,
         latitude=data.latitude,
@@ -377,7 +402,12 @@ def track_location(
 
     return {
         "status": "ok",
-        "anomalies": anomalies_detected,
+        "safety_score":   score_result["safety_score"],
+        "safety_status":  score_result["safety_status"],
+        "alert_tier":     tier_result["tier"],
+        "tier_reason":    tier_result["reason"],
+        "risk_breakdown": score_result["risk_breakdown"],
+        "anomalies":      anomalies_detected,
         "anomaly_detected": len(anomalies_detected) > 0,
     }
 

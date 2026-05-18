@@ -120,3 +120,35 @@ If you didn't request this code, please ignore this email.
 
 def generate_otp(length=6):
     return ''.join(random.choices(string.digits, k=length))
+
+async def send_email_otp_code(email: str, otp: str) -> bool:
+    """Send email verification OTP. Returns True if sent, False if not configured."""
+    if not settings.MAIL_USERNAME:
+        print(f"[DEBUG] Email OTP for {email}: {otp}  (configure MAIL_USERNAME in .env to send real emails)")
+        return False
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;padding:20px;">
+        <h2 style="color:#0E3A7E;">SafetySafar - Verify Your Email</h2>
+        <p>Your verification code is:</p>
+        <div style="font-size:36px;font-weight:bold;letter-spacing:10px;color:#0E3A7E;
+                    background:#EEF2FF;padding:16px 24px;border-radius:8px;display:inline-block;">
+            {otp}
+        </div>
+        <p style="margin-top:20px;">This code expires in <b>10 minutes</b>.</p>
+        <p style="color:#888;">Do not share this code with anyone.</p>
+    </body></html>
+    """
+    message = MessageSchema(
+        subject="SafetySafar – Email Verification Code",
+        recipients=[email],
+        body=html,
+        subtype=MessageType.html,
+    )
+    try:
+        fm = FastMail(mail_conf)
+        await fm.send_message(message)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to send email OTP to {email}: {e}")
+        return False

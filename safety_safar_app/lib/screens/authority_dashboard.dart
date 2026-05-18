@@ -7,6 +7,7 @@ import 'live_alerts_map_screen.dart';
 import 'sos_alerts_screen.dart';
 import 'authority_settings_screen.dart';
 import 'efir_management_screen.dart';
+import 'danger_zone_management_screen.dart';
 import '../login_screen.dart';
 import '../utils/api_config.dart';
 
@@ -560,46 +561,79 @@ class _AuthorityDashboardState extends State<AuthorityDashboard>
 
   // ── QUICK ACTIONS ─────────────────────────────────────────────
   Widget _buildQuickActions() {
-    final actions = [
+    final tabActions = [
       ('Tourists', Icons.people_alt_rounded, const Color(0xFF0E3A7E), 1),
       ('KYC', Icons.verified_user_rounded, Colors.orange, 2),
-      ('Live Map', Icons.map_rounded, Colors.teal, 4),
-      ('Settings', Icons.settings_rounded, Colors.blueGrey, 5),
+      ('Live Map', Icons.map_rounded, Colors.teal, 5),
+      ('Settings', Icons.settings_rounded, Colors.blueGrey, 6),
     ];
-    return Row(
-      children: actions.map((a) {
-        return Expanded(
-          child: GestureDetector(
-            onTap: () => setState(() => _selectedIndex = a.$4),
-            child: Container(
-              margin: actions.indexOf(a) < actions.length - 1
-                  ? const EdgeInsets.only(right: 10)
-                  : EdgeInsets.zero,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFEDF1F5)),
-              ),
-              child: Column(children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: a.$3.withValues(alpha:0.1), shape: BoxShape.circle),
-                  child: Icon(a.$2, color: a.$3, size: 20),
-                ),
-                const SizedBox(height: 7),
-                Text(a.$1,
-                    style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF64748B))),
-              ]),
-            ),
+    return Column(children: [
+      // Danger Zones — full-width featured card
+      GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DangerZoneManagementScreen(authToken: widget.authToken),
           ),
-        );
-      }).toList(),
-    );
+        ),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.red.shade200),
+          ),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: Colors.red.withAlpha(25), shape: BoxShape.circle),
+              child: const Icon(Icons.add_location_alt_rounded, color: Colors.red, size: 22),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Manage Danger Zones', style: TextStyle(fontWeight: FontWeight.w800,
+                  fontFamily: 'Outfit', color: Colors.red, fontSize: 14)),
+              SizedBox(height: 2),
+              Text('Mark & remove risk zones — tourists get alerts on entry',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'Outfit')),
+            ])),
+            const Icon(Icons.chevron_right_rounded, color: Colors.red),
+          ]),
+        ),
+      ),
+      // Other tab-switch actions
+      Row(
+        children: tabActions.map((a) {
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedIndex = a.$4),
+              child: Container(
+                margin: tabActions.indexOf(a) < tabActions.length - 1
+                    ? const EdgeInsets.only(right: 10)
+                    : EdgeInsets.zero,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFEDF1F5)),
+                ),
+                child: Column(children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: a.$3.withAlpha(25), shape: BoxShape.circle),
+                    child: Icon(a.$2, color: a.$3, size: 20),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(a.$1, style: const TextStyle(fontSize: 10,
+                      fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                ]),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    ]);
   }
 
   // ── SECTION TITLE ─────────────────────────────────────────────

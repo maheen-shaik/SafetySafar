@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../digital_id_screen.dart';
 import '../login_screen.dart';
 import '../services/location_tracking_service.dart';
+import '../services/background_location_service.dart';
 import '../services/discovery_service.dart';
 import '../utils/api_config.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -45,10 +47,11 @@ class _TouristDashboardState extends State<TouristDashboard>
   double _sosProgress = 0.0;
   late AnimationController _sosPulseCtrl;
 
-  // Safety Score
+  // Safety Score (AI-computed from backend)
   int _safetyScore = 100;
-  String _safetyLevel = "Excellent";
-  Color _safetyColor = Colors.green;
+  String _safetyStatus = 'SAFE';
+  String _zoneDanger = 'safe';
+  Map<String, dynamic> _riskBreakdown = {};
 
   @override
   void initState() {
@@ -59,6 +62,25 @@ class _TouristDashboardState extends State<TouristDashboard>
     _tracker = LocationTrackingService(widget.authToken);
     _startTracking();
     _fetchProfile();
+    _registerFcmToken();
+    startBackgroundService();
+  }
+
+  Future<void> _registerFcmToken() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission(alert: true, sound: true, badge: true);
+      final token = await messaging.getToken();
+      if (token == null || token.isEmpty) return;
+      await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/fcm-token'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.authToken}',
+        },
+        body: jsonEncode({'fcm_token': token}),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -69,29 +91,68 @@ class _TouristDashboardState extends State<TouristDashboard>
     super.dispose();
   }
 
+  // Derived from _safetyStatus set by the AI backend
+  String get _safetyLabel {
+    switch (_safetyStatus) {
+      case 'DANGER':  return 'Danger';
+      case 'RISK':    return 'At Risk';
+      case 'CAUTION': return 'Caution';
+      default:        return 'Safe';
+    }
+  }
+
+  Color get _safetyColor {
+    switch (_safetyStatus) {
+      case 'DANGER':  return const Color(0xFFB71C1C);
+      case 'RISK':    return const Color(0xFFE65100);
+      case 'CAUTION': return const Color(0xFFF57F17);
+      default:        return Colors.green;
+    }
+  }
+
+  String get _zoneLabel {
+    switch (_zoneDanger) {
+      case 'critical': return 'CRITICAL ZONE';
+      case 'high':     return 'HIGH RISK ZONE';
+      case 'medium':   return 'MEDIUM RISK ZONE';
+      case 'low':      return 'LOW RISK ZONE';
+      default:         return 'SAFE ZONE';
+    }
+  }
+
+  Color get _zoneColor {
+    switch (_zoneDanger) {
+      case 'critical': return const Color(0xFFB71C1C);
+      case 'high':     return const Color(0xFFE65100);
+      case 'medium':   return const Color(0xFFF57F17);
+      case 'low':      return const Color(0xFF1565C0);
+      default:         return const Color(0xFF1B5E20);
+    }
+  }
+
   void _startTracking() {
     _tracker.startTracking(
       (status) => setState(() { _locationStatus = status; _locationError = false; }),
       (err) => setState(() { _locationStatus = err; _locationError = true; }),
       onAnomalyDetected: _handleAnomaly,
+      onSafetyUpdate: _handleSafetyUpdate,
     );
+  }
+
+  void _handleSafetyUpdate(SafetyUpdate update) {
+    if (!mounted) return;
+    setState(() {
+      _safetyScore    = update.score;
+      _safetyStatus   = update.status;
+      _zoneDanger     = update.zoneDanger;
+      _riskBreakdown  = update.breakdown;
+    });
   }
 
   void _handleAnomaly(AnomalyEvent event) {
     if (!mounted) return;
-    setState(() {
-      _anomalyQueue.add(event);
-      if (event.severity == 'critical') { _safetyScore = (_safetyScore - 15).clamp(0, 100); }
-      else if (event.severity == 'warning') { _safetyScore = (_safetyScore - 5).clamp(0, 100); }
-      _updateSafetyLevel();
-    });
+    setState(() => _anomalyQueue.add(event));
     if (!_showingAnomaly) _showNextAnomaly();
-  }
-
-  void _updateSafetyLevel() {
-    if (_safetyScore > 80) { _safetyLevel = "Excellent"; _safetyColor = Colors.green; }
-    else if (_safetyScore > 50) { _safetyLevel = "Fair"; _safetyColor = Colors.orange; }
-    else { _safetyLevel = "At Risk"; _safetyColor = Colors.red; }
   }
 
   void _showNextAnomaly() {
@@ -146,6 +207,9 @@ class _TouristDashboardState extends State<TouristDashboard>
           builder: (c) => _ChatbotSheet(
             userLocation: _locationStatus,
             safetyScore: _safetyScore,
+            safetyStatus: _safetyStatus,
+            zoneDanger: _zoneDanger,
+            riskBreakdown: _riskBreakdown,
           ),
         ),
         backgroundColor: const Color(0xFF0E3A7E),
@@ -194,7 +258,7 @@ class _TouristDashboardState extends State<TouristDashboard>
   Widget _buildPageBody() {
     switch (_selectedIndex) {
       case 0: return _buildHomeTab();
-      case 1: return DigitalIDScreen(userData: profileData);
+      case 1: return DigitalIDScreen(userData: profileData, authToken: widget.authToken);
       case 2: return const WeatherScreen();
       case 3: return _buildSafeZonesTab();
       case 4: return _buildProfileTab();
@@ -216,7 +280,7 @@ class _TouristDashboardState extends State<TouristDashboard>
             const SizedBox(height: 32),
             _buildNearbyEssentials(),
             const SizedBox(height: 24),
-            _buildStatCard("SAFETY SCORE", "$_safetyScore/100 • $_safetyLevel", Icons.verified_user, _safetyColor),
+            _buildAISafetyCard(),
             const SizedBox(height: 16),
             _buildKYCStatusCard(),
             const SizedBox(height: 16),
@@ -294,7 +358,109 @@ class _TouristDashboardState extends State<TouristDashboard>
     child: Container(width: 90, margin: const EdgeInsets.only(right: 12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(i, color: c, size: 28), Text(l, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700))])),
   );
 
-  Widget _buildStatCard(String title, String val, IconData icon, Color color) => Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFEDF1F5))), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)), Text(val, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color))]), Icon(icon, color: color, size: 30)]));
+  Widget _buildAISafetyCard() {
+    final scoreColor = _safetyColor;
+    final zoneColor  = _zoneColor;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFEDF1F5)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header row
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('AI SAFETY ANALYSIS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey, letterSpacing: 1)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(color: scoreColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+            child: Text(_safetyLabel.toUpperCase(),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: scoreColor, letterSpacing: 0.5)),
+          ),
+        ]),
+        const SizedBox(height: 16),
+
+        // Score + Zone row
+        Row(children: [
+          // Safety Score circle
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('$_safetyScore', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: scoreColor, height: 1)),
+              const Text('/100  Safety Score', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ]),
+          ),
+          // Zone danger pill
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: zoneColor.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: zoneColor.withValues(alpha: 0.3)),
+            ),
+            child: Column(children: [
+              Icon(
+                _zoneDanger == 'safe' ? Icons.shield_rounded : Icons.warning_amber_rounded,
+                color: zoneColor, size: 22,
+              ),
+              const SizedBox(height: 4),
+              Text(_zoneLabel,
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: zoneColor, letterSpacing: 0.3)),
+            ]),
+          ),
+        ]),
+
+        const SizedBox(height: 16),
+
+        // Risk breakdown bar
+        if (_riskBreakdown.isNotEmpty) ...[
+          const Text('RISK FACTORS', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.grey, letterSpacing: 0.8)),
+          const SizedBox(height: 8),
+          ..._buildRiskBars(),
+        ],
+      ]),
+    );
+  }
+
+  List<Widget> _buildRiskBars() {
+    final labels = {
+      'ping_gap_pct':   'Signal Gap',
+      'inactivity_pct': 'Inactivity',
+      'distress_pct':   'Distress',
+      'zone_risk_pct':  'Zone Risk',
+      'device_pct':     'Battery',
+    };
+    return labels.entries.map((e) {
+      final pct = (_riskBreakdown[e.key] as num?)?.toInt() ?? 0;
+      final Color barColor = pct >= 70 ? const Color(0xFFB71C1C)
+          : pct >= 40 ? const Color(0xFFE65100)
+          : pct >= 15 ? const Color(0xFFF57F17)
+          : Colors.green;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(children: [
+          SizedBox(width: 72,
+              child: Text(e.value, style: const TextStyle(fontSize: 10, color: Colors.grey))),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: pct / 100,
+                minHeight: 6,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation(barColor),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(width: 28,
+              child: Text('$pct%', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: barColor))),
+        ]),
+      );
+    }).toList();
+  }
 
   Widget _buildKYCStatusCard() {
     final bool ok = profileData?['kyc_verified'] ?? false;
@@ -597,7 +763,16 @@ class _NearbyPlacesList extends StatelessWidget {
 class _ChatbotSheet extends StatefulWidget {
   final String userLocation;
   final int safetyScore;
-  const _ChatbotSheet({this.userLocation = 'India', this.safetyScore = 100});
+  final String safetyStatus;
+  final String zoneDanger;
+  final Map<String, dynamic> riskBreakdown;
+  const _ChatbotSheet({
+    this.userLocation = 'India',
+    this.safetyScore = 100,
+    this.safetyStatus = 'SAFE',
+    this.zoneDanger = 'safe',
+    this.riskBreakdown = const {},
+  });
   @override
   State<_ChatbotSheet> createState() => _ChatbotSheetState();
 }
@@ -635,7 +810,17 @@ class _ChatbotSheetState extends State<_ChatbotSheet> {
     });
     _scrollToBottom();
     try {
-      final context = 'Location: ${widget.userLocation}\nSafety Score: ${widget.safetyScore}/100';
+      final breakdown = widget.riskBreakdown;
+      final breakdownStr = breakdown.isEmpty ? '' : '\nRisk factors:'
+          ' Signal Gap ${breakdown['signal_gap_pct'] ?? 0}%,'
+          ' Inactivity ${breakdown['inactivity_pct'] ?? 0}%,'
+          ' Distress ${breakdown['distress_pct'] ?? 0}%,'
+          ' Zone Risk ${breakdown['zone_risk_pct'] ?? 0}%,'
+          ' Battery ${breakdown['battery_pct'] ?? 0}%';
+      final context = 'Location: ${widget.userLocation}'
+          '\nSafety Score: ${widget.safetyScore}/100 — ${widget.safetyStatus}'
+          '\nZone Danger: ${widget.zoneDanger}'
+          '$breakdownStr';
       final response = await LLMChatbotService.chat(userMessage: text, context: context);
       if (mounted) setState(() { _messages.add({'role': 'bot', 'text': response.isEmpty ? '⚠️ No response received. Please try again.' : response}); _isLoading = false; });
     } catch (e) {

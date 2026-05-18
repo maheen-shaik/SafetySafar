@@ -69,6 +69,7 @@ class _TouristMapScreenState extends State<TouristMapScreen> {
           desiredAccuracy: LocationAccuracy.high,
         );
         if (mounted) setState(() => _currentPosition = updated);
+        await _loadDangerZones();
         await _trackLocation();
         await _assessZone();
       });
@@ -78,14 +79,13 @@ class _TouristMapScreenState extends State<TouristMapScreen> {
   }
 
   Future<void> _loadDangerZones() async {
-    if (_currentPosition == null) return;
     try {
-      final uri = Uri.parse(
-        '${ApiConfig.dangerZones}?latitude=${_currentPosition!.latitude}&longitude=${_currentPosition!.longitude}&radius_km=20',
-      );
+      final uri = Uri.parse(ApiConfig.dangerZones);
       final res = await http.get(uri, headers: {'Authorization': 'Bearer ${widget.authToken}'});
+      debugPrint('[Zones] status=${res.statusCode} body=${res.body}');
       if (res.statusCode == 200 && mounted) {
         final List zones = jsonDecode(res.body);
+        debugPrint('[Zones] loaded ${zones.length} zones');
         final Set<Circle> newCircles = {};
         final Set<Marker> zoneMarkers = {};
         for (var zone in zones) {

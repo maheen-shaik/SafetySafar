@@ -121,6 +121,58 @@ ZONES = [
         "description": "Uneven terrain and limited mobile signal. Travel in groups recommended.",
         "reason": "Minor terrain hazard: rocky paths and poor lighting at night",
     },
+    # ── Muffakham Jah College ──────────────────────────────────────
+    {
+        "name": "Muffakham Jah College of Engineering & Technology",
+        "latitude": 17.428477725953456,
+        "longitude": 78.44287581349269,
+        "radius": 500,
+        "danger_level": "low",
+        "zone_type": "unsafe",
+        "description": "College campus area. Uneven footpaths and heavy student traffic near main gate.",
+        "reason": "Terrain hazard: footpath conditions and dense pedestrian traffic",
+    },
+    # ── ORR Hyderabad sections ─────────────────────────────────────
+    {
+        "name": "ORR – Gachibowli / HITECH City Junction",
+        "latitude": 17.4406,
+        "longitude": 78.3491,
+        "radius": 1200,
+        "danger_level": "medium",
+        "zone_type": "unsafe",
+        "description": "High-speed outer ring road junction with heavy goods vehicles. Pedestrian crossing is hazardous.",
+        "reason": "Traffic hazard: frequent accidents at ORR interchange",
+    },
+    {
+        "name": "ORR – Shamshabad / Airport Stretch",
+        "latitude": 17.2527,
+        "longitude": 78.4337,
+        "radius": 1500,
+        "danger_level": "medium",
+        "zone_type": "unsafe",
+        "description": "Airport-adjacent ORR stretch. Speeding vehicles and limited roadside lighting at night.",
+        "reason": "Traffic hazard: night-time speeding & accident-prone zone",
+    },
+    {
+        "name": "ORR – Ghatkesar East Section",
+        "latitude": 17.4205,
+        "longitude": 78.6275,
+        "radius": 1200,
+        "danger_level": "medium",
+        "zone_type": "unsafe",
+        "description": "Eastern ORR corridor with industrial vehicle traffic. Limited emergency services nearby.",
+        "reason": "Traffic hazard: heavy vehicle corridor, poor emergency access",
+    },
+    {
+        "name": "ORR – Patancheru / Sangareddy Entry",
+        "latitude": 17.5327,
+        "longitude": 78.2785,
+        "radius": 1000,
+        "danger_level": "medium",
+        "zone_type": "industrial",
+        "description": "ORR entry near Patancheru industrial cluster. Chemical transport vehicles frequent this stretch.",
+        "reason": "Industrial + traffic hazard: chemical tanker corridor",
+    },
 ]
 
 added = 0

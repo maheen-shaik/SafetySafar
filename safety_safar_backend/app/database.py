@@ -1,7 +1,14 @@
+import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
 
-DATABASE_URL = "postgresql://postgres:1234@localhost:5432/safety_safar"
+load_dotenv()
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:1234@localhost:5432/safety_safar",  # local fallback
+)
 
 engine = create_engine(DATABASE_URL)
 
@@ -53,6 +60,47 @@ def ensure_user_columns():
             if column_name not in existing_columns:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
                 existing_columns.add(column_name)
+
+def ensure_email_verification_columns():
+    # DEFAULT TRUE so existing users keep access; new users get FALSE via Python default
+    required_columns = {
+        "email_verified": "BOOLEAN DEFAULT TRUE",
+        "email_otp_code": "VARCHAR",
+        "email_otp_expires": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+        )
+        existing = {row[0] for row in result}
+        for col, typ in required_columns.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {typ}"))
+
+def ensure_authority_columns():
+    required_columns = {
+        "is_approved": "BOOLEAN DEFAULT FALSE",
+        "department": "VARCHAR",
+        "approved_at": "TIMESTAMP WITH TIME ZONE",
+        "approved_by": "UUID",
+    }
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+        )
+        existing = {row[0] for row in result}
+        for col, typ in required_columns.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {typ}"))
+
+def ensure_fcm_columns():
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+        )
+        existing = {row[0] for row in result}
+        if "fcm_token" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN fcm_token VARCHAR"))
 
 def ensure_alert_columns():
     required_columns = {

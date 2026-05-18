@@ -50,12 +50,17 @@ class LLMChatbotService {
         'messages': [
           {
             'role': 'system',
-            'content': 'You are SafetySafar safety assistant. Answer in 1-2 sentences.',
+            'content':
+                'You are SafetySafar, an AI safety assistant for tourists in India. '
+                'You receive real-time safety data computed by our AI anomaly detection system. '
+                'Give concise, actionable safety advice (2-3 sentences). '
+                'If zone danger is high or critical, strongly advise the tourist to leave immediately. '
+                'Context about the tourist: $context',
           },
           {'role': 'user', 'content': userMessage},
         ],
         'temperature': 0.7,
-        'max_tokens': 150,
+        'max_tokens': 200,
       };
 
       final response = await http

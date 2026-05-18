@@ -16,6 +16,12 @@ class User(Base):
 
     role = Column(String, default="tourist")
 
+    # Authority/Admin specific fields
+    is_approved = Column(Boolean, default=False)
+    department = Column(String, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    approved_by = Column(UUID(as_uuid=True), nullable=True)
+
     nationality = Column(String, nullable=False)
     dob = Column(String, nullable=True)
     gender = Column(String, nullable=True)
@@ -44,3 +50,11 @@ class User(Base):
     # Password Reset & OTP
     reset_token = Column(String, nullable=True)
     otp_code = Column(String, nullable=True)
+
+    # Email Verification
+    email_verified = Column(Boolean, default=False)
+    email_otp_code = Column(String, nullable=True)
+    email_otp_expires = Column(DateTime(timezone=True), nullable=True)
+
+    # FCM Push Notifications
+    fcm_token = Column(String, nullable=True)

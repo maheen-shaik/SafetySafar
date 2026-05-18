@@ -1,7 +1,7 @@
 class ApiConfig {
   // ════════════════════════════════════════════════════════════════
   // ✏️  CHANGE ONLY THIS LINE when you switch networks / locations
-  static const String serverIp = '192.168.0.2';
+  static const String serverIp = '192.168.0.9';
   // ════════════════════════════════════════════════════════════════
   //
   // HOW TO FIND YOUR IP:
@@ -18,8 +18,16 @@ class ApiConfig {
   static String get register => '$baseUrl/register';
   static String get sendOtp => '$baseUrl/send-otp';
   static String get verifyOtp => '$baseUrl/verify-otp';
+  static String get sendEmailOtp => '$baseUrl/send-email-otp';
+  static String get verifyEmailOtp => '$baseUrl/verify-email-otp';
   static String get forgotPassword => '$baseUrl/forgot-password';
   static String get resetPassword => '$baseUrl/reset-password';
+
+  // ── Authority/Admin Auth ─────────────────────────────────────
+  static String get authorityLogin => '$baseUrl/authority/login';
+  static String get authorityRegister => '$baseUrl/authority/register';
+  static String authorityApprove(String userId) => '$baseUrl/authority/approve/$userId';
+  static String get pendingAuthorities => '$baseUrl/authority/pending';
 
   // ── Dashboard & Alerts ───────────────────────────────────────
   static String get dashboardStats => '$baseUrl/dashboard/stats';
@@ -57,6 +65,8 @@ class ApiConfig {
 
   // Danger zones & AI assessment
   static String get dangerZones => '$baseUrl/anomaly/danger-zones';
+  static String get addDangerZone => '$baseUrl/anomaly/danger-zones';
+  static String deleteDangerZone(String id) => '$baseUrl/anomaly/danger-zones/$id';
   static String dangerZonesNear(
     double lat,
     double lng, {

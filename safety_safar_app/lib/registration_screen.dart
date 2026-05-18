@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
-import 'digital_id_screen.dart'; // Import the new success screen
+import 'email_otp_screen.dart';
 import 'utils/country_codes.dart';  // Import country codes
 import 'utils/api_config.dart';
 
@@ -138,17 +138,52 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       if (response.statusCode == 200) {
         if (mounted) {
-          // Navigate to Success Screen
+          final data = jsonDecode(response.body);
+          final userData = {
+            'first_name': _firstNameController.text,
+            'last_name': _lastNameController.text,
+            'email': _emailController.text,
+            'nationality': _nationality,
+          };
+
+          // Dev mode: show the OTP in a dialog so developer can test without email SMTP
+          if (data['dev_otp'] != null) {
+            await showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => AlertDialog(
+                title: const Text('Dev Mode – Email OTP'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Email SMTP is not configured.\nYour verification code is:'),
+                    const SizedBox(height: 12),
+                    Text(
+                      data['dev_otp'] as String,
+                      style: const TextStyle(
+                        fontSize: 32, fontWeight: FontWeight.bold,
+                        letterSpacing: 8, color: Color(0xFF0E3A7E),
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Got it'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          if (!mounted) return;
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-            builder: (context) => DigitalIDScreen(
-                userData: {
-                  'first_name': _firstNameController.text,
-                  'last_name': _lastNameController.text,
-                  'email': _emailController.text,
-                  'nationality': _nationality,
-                },
+              builder: (_) => EmailOtpScreen(
+                email: _emailController.text,
+                userData: userData,
               ),
             ),
           );
